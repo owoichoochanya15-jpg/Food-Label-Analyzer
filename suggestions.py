@@ -104,6 +104,8 @@ TEXT_REPLACEMENTS: List[Tuple[str, str]] = [
     ("noix de coco", " "), ("leche de coco", " "),
     ("cocoa butter", " "), ("cacao butter", " "), ("beurre de cacao", " "),
     ("beurre de cacahuete", "cacahuete"), ("shea butter", " "),
+    ("peanut butter", "peanut"), ("almond butter", "almond"),
+    ("hazelnut butter", "hazelnut"), ("cashew butter", "cashew"),
     ("cream of tartar", " "),
 ]
 
@@ -200,7 +202,7 @@ INGREDIENT_HINTS = [
 ]
 
 RECIPES: List[Dict[str, Any]] = [
-    {"name": "Tomato & Veggie Pasta",
+    {"name": "Tomato & Veggie Pasta", "allergens": ["gluten"],
      "ingredients": ["pasta", "tomato", "onion", "garlic", "olive oil", "basil"],
      "steps": "Boil pasta. Saute onion and garlic in olive oil, add chopped tomato and simmer 10 min. Toss with pasta and basil."},
     {"name": "Veggie Egg Fried Rice",
@@ -230,7 +232,7 @@ RECIPES: List[Dict[str, Any]] = [
     {"name": "Bean & Tomato Chilli",
      "ingredients": ["beans", "tomato", "onion", "pepper", "cumin", "garlic"],
      "steps": "Saute onion and garlic, add beans, tomato, pepper and cumin, simmer 20 min."},
-    {"name": "Avocado Egg Toast",
+    {"name": "Avocado Egg Toast", "allergens": ["gluten"],
      "ingredients": ["bread", "avocado", "egg", "lemon"],
      "steps": "Mash avocado with lemon, spread on toasted bread and top with a boiled or poached egg."},
     {"name": "Fruit Smoothie",
@@ -388,10 +390,11 @@ class MealSuggestionGenerator:
     """Allergens, healthier alternatives and recipe ideas for a food product."""
 
     def __init__(self, api_key: Optional[str] = None, use_ai: bool = True,
-                 model: str = "gemini-2.5-flash"):
+                 model: Optional[str] = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         self.use_ai = use_ai and bool(self.api_key)
-        self.model = model
+        self.model = model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+        self.last_ai_error: Optional[str] = None   # why Gemini was not used (for the UI)
 
     # ---- 1. Allergens -----------------------------------------------------
     def _scan_allergens(self, product: Any) -> Tuple[Set[str], Set[str]]:
@@ -477,7 +480,8 @@ class MealSuggestionGenerator:
 
         scored = []
         for recipe in RECIPES:
-            recipe_allergens = set(self.detect_allergens({"ingredients": recipe["ingredients"]}))
+            recipe_allergens = (set(self.detect_allergens({"ingredients": recipe["ingredients"]}))
+                                | set(recipe.get("allergens", [])))
             if recipe_allergens & avoid:
                 continue
             shared = [i for i in recipe["ingredients"] if _keyword_in(text, i)]
@@ -515,7 +519,8 @@ class MealSuggestionGenerator:
             client = genai.Client(api_key=self.api_key)
             response = client.models.generate_content(model=self.model, contents=prompt)
             return (response.text or "").strip() or None
-        except Exception:
+        except Exception as exc:
+            self.last_ai_error = f"{type(exc).__name__}: {exc}"
             return None  # the app still works without AI
 
     # ---- Everything in one call (for Person 4's app.py) -------------------
